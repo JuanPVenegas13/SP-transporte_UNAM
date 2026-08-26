@@ -1,0 +1,21 @@
+[project]
+name = "transporte-unam"
+version = "0.1.0"
+description = "Limpieza y análisis de la Encuesta Nacional de Movilidad y Transporte (ENMT) - UNAM"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "xlrd>=2.0",
+    "openpyxl>=3.1",
+    "pyarrow>=15.0",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "jupyter>=1.1",
+    "ipykernel>=6.29",
+    "nbconvert>=7.16",
+]
+
+[dependency-groups]
+dev = []
