@@ -1,19 +1,22 @@
-# transporte_UNAM — Limpieza del dataset ENMT
+# transporte_UNAM — Limpieza y preparación del dataset ENMT
 
-Encuesta Nacional de Movilidad y Transporte. Este repo contiene la **etapa de limpieza**
-del proyecto (a cargo de Juan Pablo Venegas); el análisis y la visualización van aparte.
+Encuesta Nacional de Movilidad y Transporte. Este repo cubre la **limpieza** y la **construcción de
+la base analítica** del proyecto (a cargo de Juan Pablo Venegas). El modelado —las redes bayesianas
+y la inferencia— se hace **en R**, a partir de `enmt_bn_final.csv`.
 
 ## Cómo correrlo
 
 ```bash
 uv sync                              # instala dependencias en .venv
-uv run jupyter lab scripts/          # abre el notebook
+uv run jupyter lab scripts/          # abre los notebooks
 ```
 
-O sin abrir Jupyter:
+O sin abrir Jupyter, en orden (cada uno depende del anterior):
 
 ```bash
 uv run jupyter nbconvert --to notebook --execute --inplace scripts/01_limpieza_enmt.ipynb
+uv run jupyter nbconvert --to notebook --execute --inplace scripts/02_seleccion_columnas.ipynb
+uv run jupyter nbconvert --to notebook --execute --inplace scripts/03_base_final.ipynb
 ```
 
 ## Estructura
@@ -21,21 +24,27 @@ uv run jupyter nbconvert --to notebook --execute --inplace scripts/01_limpieza_e
 ```
 transporte_UNAM/
 ├── data/
-│   ├── enmt_unam.csv           ← microdatos originales (versionado, no tocar)
-│   ├── diccionario_enmt.xls    ← libro de códigos SPSS (versionado)
-│   └── processed/              ← generado por el notebook (NO versionado)
-│       ├── enmt_limpio.csv
-│       ├── enmt_analitico.csv
-│       ├── diccionario.json
-│       └── reporte_calidad.csv
+│   ├── enmt_unam.csv               ← microdatos originales (versionado, no tocar)
+│   ├── diccionario_enmt.xls        ← libro de códigos SPSS (versionado)
+│   └── processed/                  ← generado por los notebooks (NO versionado)
+│       ├── enmt_limpio.csv         ← 01: base limpia completa (1,191 × 556)
+│       ├── enmt_analitico.csv      ← 01: subconjunto temático (108 columnas)
+│       ├── diccionario.json        ← 01: etiquetas de variable y de valor
+│       ├── reporte_calidad.csv     ← 01: cobertura por columna
+│       ├── mapa_nodos.csv          ← 02: reporte de cobertura de los nodos candidatos
+│       ├── enmt_bn_final.csv       ← 03: BASE FINAL, la que se lee en R
+│       ├── enmt_bn_codebook.csv    ← 03: qué es cada nodo y en qué orden van sus niveles
+│       └── enmt_bn_q1..q4.csv      ← 03: un archivo por query, filtrado y sin NA
 ├── scripts/
-│   └── 01_limpieza_enmt.ipynb  ← todo el proceso de limpieza
+│   ├── 01_limpieza_enmt.ipynb      ← limpieza: centinelas, tipos, PII
+│   ├── 02_seleccion_columnas.ipynb ← exploración de variables candidatas
+│   └── 03_base_final.ipynb         ← nodos derivados, recodificación y base final
 ├── pyproject.toml
 └── uv.lock
 ```
 
 `data/processed/` está en `.gitignore` a propósito: esos archivos se **reproducen** corriendo
-el notebook. Lo que se versiona es el código y los datos originales.
+los notebooks. Lo que se versiona es el código y los datos originales.
 
 ## El problema principal: nulos invisibles
 
@@ -135,8 +144,51 @@ caminata, automóvil, seguridad vial, transporte público y discapacidad.
 Quedó fuera el *roster* del hogar (`h9_*` … `h26_*`, repetido hasta 15 veces) y todo lo que tenía
 más de 70 % de faltantes.
 
+## Base final para las redes bayesianas (notebook 03)
+
+`enmt_bn_final.csv` son los 1,191 encuestados con los nodos ya recodificados **como texto**, para que
+en R salgan como factores sin traducir códigos:
+
+```r
+d  <- read.csv("data/processed/enmt_bn_final.csv", stringsAsFactors = TRUE)
+q4 <- read.csv("data/processed/enmt_bn_q4.csv",    stringsAsFactors = TRUE)
+```
+
+Los faltantes van escritos como `NA` y los indicadores de auditoría como `TRUE`/`FALSE`, así que
+`read.csv` los lee bien sin argumentos extra. El **orden de los niveles** no sobrevive a un CSV:
+está en `enmt_bn_codebook.csv`, columna `niveles_en_orden`.
+
+Los archivos `enmt_bn_q1..q4.csv` ya vienen filtrados a su universo y **sin `NA`**, que es lo que
+`bnlearn` necesita para ajustar.
+
+| Query | Nodos | n |
+|---|---|---|
+| Q1 — metro vs. resto de TP → seguridad y eficiencia | `grupo_tp` → `perc_seguridad`, `perc_eficiencia` | 1,017 |
+| Q2 — patrones/autoempleados vs. profesionistas → costo | `ocupacion` → `perc_costo` | 137 |
+| Q3 — escolaridad → modo principal | `escolaridad` → `modo_principal` | 1,184 |
+| Q4 — asalto en TP según ingreso (usuarios de TP) | `ingreso_gpo` → `asalto_tp` | 1,014 |
+
+Tres nodos **no existían como columna** y hubo que derivarlos:
+
+- **`ocupacion`** vive en el *roster* del hogar (`h21_*`, una columna por integrante), no a nivel del
+  informante. Se identifica su renglón cruzando `sexo` + `sd2` contra el sexo (`h10_*`) y la edad
+  (`h11_*`) de cada integrante: funciona en **1,185 de 1,191 casos (99.5 %)**.
+- **`modo_principal`** se deduce de la batería `p1a_*` (22 modos).
+- **`grupo_tp` / `usa_tp` / `usa_metro`** definen los universos de Q1 y Q4 por **uso** del transporte
+  público, no por modo principal.
+
+Dos advertencias antes de modelar, ambas detalladas en las notas finales del notebook 03:
+
+- **Q4 es el query frágil.** Solo 70 personas del universo de TP reportaron un asalto. Por eso el
+  ingreso se exporta en dos versiones (`ingreso_gpo` de 3 niveles e `ingreso_bin` de 2): si la de
+  3 niveles deja celdas demasiado delgadas, la binaria está lista.
+- **`modo_principal` está dominado por `tp_concesionado`.** El 38 % de las personas declara la misma
+  frecuencia máxima en varios modos, y el desempate favorece al grupo más usado. Para cualquier
+  pregunta sobre el metro hay que usar `grupo_tp` (210 usuarios), no `modo_principal` (10).
+
 ## Si algo no les cuadra
 
-Los criterios están explícitos en las secciones 6 y 11 del notebook, como reglas que se pueden
-modificar y volver a correr. Si el equipo quiere otro umbral de faltantes o incluir otros bloques
-en el analítico, es cambiar una constante y re-ejecutar.
+Los criterios están explícitos como reglas que se pueden modificar y volver a correr: las reglas
+A/B/C/D de las secciones 6 y 11 del notebook 01, y los mapas de recodificación de la sección 7 del
+notebook 03. Si el equipo quiere otro umbral de faltantes, otro corte de ingreso o incluir otros
+bloques en el analítico, es cambiar un diccionario y re-ejecutar.
