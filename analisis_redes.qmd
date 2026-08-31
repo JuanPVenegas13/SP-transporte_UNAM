@@ -275,6 +275,134 @@ sigue ahí: `grupo_tp` aporta información propia sobre el riesgo de asalto. Que
 pruebas coincidan refuerza la conclusión y respalda mantener el arco. Esta dependencia es
 además la base de la query 4.
 
+## Aprendizaje de la estructura con hill-climbing
 
+Hasta aquí las tres DAGs se propusieron a partir de razonamiento. Ahora invertimos el enfoque: en lugar de imponer una estructura, dejamos que el algoritmo **hill-climbing** (`hc`) la aprenda directamente de los datos. El algoritmo parte de una red vacía y va agregando, quitando o invirtiendo arcos, quedándose en cada paso con el cambio que más mejora el score, hasta que ninguna modificación lo aumenta. El resultado es la estructura que mejor se ajusta a los datos según ese criterio.
 
+```{r}
+dag_hc <- hc(d_completo)
+modelstring(dag_hc)
+graphviz.plot(dag_hc, shape = "ellipse")
+```
 
+## Pertinencia de la estructura aprendida
+
+La red obtenida por hill-climbing coincide con la DAG 3 en sus relaciones más sólidas:
+`tam_loc → grupo_tp`, `grupo_tp → asalto_tp` y los arcos que salen de `escolaridad`
+(`ingreso_gpo` y `ocupacion`) aparecen en ambas, y son justamente los que la prueba de
+`arc.strength` había marcado como más significativos. Que el algoritmo, partiendo solo de
+los datos, reconstruya estas relaciones respalda las decisiones que tomamos a mano.
+
+El algoritmo **conecta las tres percepciones entre sí** (`perc_seguridad → perc_eficiencia`, y ambas hacia `perc_costo`), una relación que no habíamos propuesto pero que es plausible: quien percibe el transporte como inseguro tiende también a verlo como ineficiente y caro. En cambio, **elimina los arcos `ingreso_gpo → perc_costo` y `ocupacion → perc_costo`** que sí incluía la DAG 3 —los mismos que `arc.strength` había señalado como no significativos—, lo que confirma que esas dependencias eran débiles.
+
+Ahora bien, la pertinencia de esta estructura tiene un límite importante: el hill-climbing
+detecta **asociación, no causalidad**, y elige la dirección de los arcos por conveniencia
+estadística, no por sentido teórico. La relación `perc_seguridad → perc_eficiencia`, por
+ejemplo, podría ir en cualquiera de las dos direcciones sin cambiar el ajuste. Por eso la
+estructura aprendida se interpreta como una guía de qué variables están relacionadas. 
+
+## Respuesta a las queries
+
+Las queries se responden sobre la **DAG 3**, ya que es la estructura que contiene las
+relaciones de dependencia que cada pregunta busca examinar. Usamos `cpquery` para estimar
+las probabilidades condicionales de interés.
+
+### Query 1 — Metro vs. resto de transporte público
+
+La pregunta es si quienes usan el metro perciben el transporte público como más seguro y
+más eficiente que quienes usan otro tipo de transporte público. Comparamos, para cada
+grupo, la probabilidad de percibir el servicio como seguro y como eficiente.
+
+```{r}
+set.seed(42)
+
+# Percepción de SEGURIDAD
+cat("P(seguro | metro)   =", cpquery(bn3, event = (perc_seguridad == "seguro"), evidence = (grupo_tp == "metro"), n = 10^6), "\n")
+cat("P(seguro | otro_tp) =", cpquery(bn3, event = (perc_seguridad == "seguro"), evidence = (grupo_tp == "otro_tp"), n = 10^6), "\n\n")
+
+# Percepción de EFICIENCIA
+cat("P(eficiente | metro)   =", cpquery(bn3, event = (perc_eficiencia == "eficiente"), evidence = (grupo_tp == "metro"), n = 10^6), "\n")
+cat("P(eficiente | otro_tp) =", cpquery(bn3, event = (perc_eficiencia == "eficiente"), evidence = (grupo_tp == "otro_tp"), n = 10^6), "\n")
+```
+Los resultados van en dirección contraria a lo que la pregunta sugería. Entre los usuarios
+de metro, la probabilidad de percibir el transporte público como seguro es de 0.32, frente
+a 0.43 entre quienes usan otro tipo de transporte público. En eficiencia ocurre lo mismo:
+0.55 contra 0.63 a favor del resto de usuarios. Es decir, en ambas dimensiones los
+usuarios de metro evalúan **peor** el servicio, no mejor.
+
+La respuesta a la query 1 es, entonces, negativa: quienes usan principalmente el metro no
+lo consideran ni más seguro ni más efectivo que el resto de usuarios de transporte público;
+al contrario, tienden a percibirlo de forma más desfavorable.
+
+### Query 2 — Ocupación y percepción del costo
+
+La pregunta es si patrones y autoempleados difieren de los profesionistas en su percepción
+del costo del transporte. Comparamos la probabilidad de percibir el transporte como caro
+entre ambos grupos ocupacionales.
+
+```{r}
+set.seed(42)
+
+cat("P(caro | patron_autoempleado) =", cpquery(bn3, event = (perc_costo == "caro"), evidence = (ocupacion == "patron_autoempleado"), n = 10^6), "\n")
+cat("P(caro | profesionista)       =", cpquery(bn3, event = (perc_costo == "caro"), evidence = (ocupacion == "profesionista"), n = 10^6), "\n")
+```
+
+La diferencia entre ambos grupos es mínima: la probabilidad de percibir el transporte como
+caro es de 0.55 entre patrones y autoempleados, y de 0.59 entre profesionistas, apenas
+cuatro puntos porcentuales de separación. Ambos grupos coinciden en ver el costo del
+transporte como elevado en proporciones muy similares.
+
+La respuesta a la query 2 es, por tanto, que no existe una diferencia relevante entre
+patrones/autoempleados y profesionistas en su percepción del costo.
+
+### Query 3 — Escolaridad y modo de transporte principal
+
+La pregunta es si el nivel de escolaridad influye en el modo de transporte que la persona
+usa principalmente. Como `modo_principal` tiene varias categorías, comparamos, para cada
+nivel de escolaridad, la probabilidad de que el modo principal sea el automóvil o motocicleta
+frente al transporte público concesionado, que son los dos modos dominantes.
+
+```{r}
+set.seed(42)
+
+cat("P(auto | basica) =", cpquery(bn3, event = (modo_principal == "auto_moto"), evidence = (escolaridad == "basica"), n = 10^6), "\n")
+cat("P(auto | media_superior) =", cpquery(bn3, event = (modo_principal == "auto_moto"), evidence = (escolaridad == "media_superior"), n = 10^6), "\n")
+cat("P(auto | superior) =", cpquery(bn3, event = (modo_principal == "auto_moto"), evidence = (escolaridad == "superior"), n = 10^6), "\n")
+cat("P(tp_concesionado | basica) =", cpquery(bn3, event = (modo_principal == "tp_concesionado"), evidence = (escolaridad == "basica"), n = 10^6), "\n")
+cat("P(tp_concesionado | media_superior) =", cpquery(bn3, event = (modo_principal == "tp_concesionado"), evidence = (escolaridad == "media_superior"), n = 10^6), "\n")
+cat("P(tp_concesionado | superior) =", cpquery(bn3, event = (modo_principal == "tp_concesionado"), evidence = (escolaridad == "superior"), n = 10^6), "\n")
+```
+Las probabilidades apenas se mueven entre niveles de escolaridad. La probabilidad de que el
+modo principal sea el automóvil se mantiene prácticamente constante —0.21, 0.21 y 0.22 para
+básica, media superior y superior—, y la del transporte concesionado sube muy poco (0.67, 0.68 y 0.69). En los tres niveles educativos, el transporte concesionado es
+por mucho el modo dominante.
+
+La respuesta a la query 3 es que la escolaridad no parece influir de forma notoria en el
+modo de transporte principal, al menos entre automóvil y transporte concesionado.
+
+### Query 4 — Ingreso y riesgo de asalto en transporte público
+
+La pregunta es si, entre quienes usan transporte público, la probabilidad de sufrir un
+asalto difiere según el nivel de ingreso. Contrastamos el nivel bajo (`hasta_2_sm`) contra
+el alto (`mas_de_2_sm`) de la variable `ingreso_gpo`, que es la que forma parte de la red.
+
+```{r}
+set.seed(42)
+
+cat("P(asalto | ingreso bajo) =", cpquery(bn3, event = (asalto_tp == "si"), evidence = (ingreso_gpo == "hasta_2_sm"), n = 10^6), "\n")
+cat("P(asalto | ingreso alto) =", cpquery(bn3, event = (asalto_tp == "si"), evidence = (ingreso_gpo == "mas_de_2_sm"), n = 10^6), "\n")
+```
+
+Las dos probabilidades son prácticamente iguales: 7.2% para el nivel bajo de ingreso y 7.9%
+para el alto. La diferencia es menor a un punto porcentual. En términos prácticos, ambos
+grupos enfrentan un riesgo similar.
+
+La respuesta a la query 4 es que el nivel de ingreso no marca una diferencia relevante en
+la probabilidad de sufrir un asalto en transporte público. Este resultado hay que tomarlo
+con cautela por dos razones. Primero, se trata del query más frágil del estudio: en toda la
+muestra solo 74 personas reportaron haber sido asaltadas en TP, así que las probabilidades
+condicionales descansan sobre un número pequeño de casos y las diferencias observadas caen
+dentro del margen de variación esperado. Segundo, en la DAG 3 el asalto está conectado
+directamente con el tipo de transporte y el tamaño de localidad, no con el ingreso, lo que
+sugiere que el riesgo de asalto se explica mejor por el contexto de movilidad que por la
+posición económica del usuario.
