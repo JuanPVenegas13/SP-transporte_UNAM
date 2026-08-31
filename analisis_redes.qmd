@@ -17,7 +17,7 @@ Leemos la base final construida en la etapa de Python. Los nodos vienen como tex
 
 ```{r}
 library(bnlearn)
-d <- read.csv("data/processed/enmt_bn_final.csv", stringsAsFactors = TRUE)
+d = read.csv("data/processed/enmt_bn_final.csv", stringsAsFactors = TRUE)
 str(d)
 ```
 
@@ -28,10 +28,10 @@ Al leer el CSV, R ordena los niveles de cada factor **alfabéticamente**, lo que
 Fijamos manualmente el orden de los factores ordinales que intervienen en las queries. Esto importa sobre todo para **Q4**, que compara el riesgo de asalto según se gane "más o menos" que el ingreso promedio: sin el orden correcto, la interpretación de la variable pierde sentido. El orden previsto de cada nodo está documentado en `enmt_bn_codebook.csv`, columna `niveles_en_orden`.
 
 ```{r}
-d$ingreso_gpo <- factor(d$ingreso_gpo,
+d$ingreso_gpo = factor(d$ingreso_gpo,
                         levels = c("sin_ingreso", "hasta_2_sm", "mas_de_2_sm"))
-d$ingreso_bin <- factor(d$ingreso_bin, levels = c("bajo", "alto"))
-d$escolaridad <- factor(d$escolaridad,
+d$ingreso_bin = factor(d$ingreso_bin, levels = c("bajo", "alto"))
+d$escolaridad = factor(d$escolaridad,
                         levels = c("basica", "media_superior", "superior"))
 ```
 
@@ -63,12 +63,12 @@ La siguiente tabla justifica cada arco propuesto:
 | `ingreso_gpo → asalto_tp`, `grupo_tp → asalto_tp` | El ingreso y el tipo de transporte se relacionan con la exposición al asalto. |
 
 ```{r}
-nodos <- c("edad_gpo", "escolaridad", "ingreso_gpo", "ocupacion", "tam_loc",
+nodos = c("edad_gpo", "escolaridad", "ingreso_gpo", "ocupacion", "tam_loc",
            "grupo_tp", "modo_principal",
            "perc_seguridad", "perc_eficiencia", "perc_costo", "asalto_tp")
 
-dag1 <- empty.graph(nodes = nodos)
-arcos1 <- matrix(c(
+dag1 = empty.graph(nodes = nodos)
+arcos1 = matrix(c(
   "edad_gpo",     "escolaridad",      # la generación influye en la escolaridad
   "escolaridad",  "ingreso_gpo",      # más estudios -> más ingreso
   "escolaridad",  "ocupacion",        # estudios -> tipo de ocupación
@@ -84,7 +84,7 @@ arcos1 <- matrix(c(
   "ingreso_gpo",  "asalto_tp",        # Q4: el ingreso y el asalto
   "grupo_tp",     "asalto_tp"),
   byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
-arcs(dag1) <- arcos1
+arcs(dag1) = arcos1
 
 graphviz.plot(dag1, shape = "ellipse")
 ```
@@ -113,8 +113,8 @@ percepción y uso de transporte se invierte respecto a la DAG 1.
 | `perc_eficiencia → modo_principal` | Percibir el TP como eficiente favorece su uso como modo principal. |
 
 ```{r}
-dag2 <- empty.graph(nodes = nodos)
-arcos2 <- matrix(c(
+dag2 = empty.graph(nodes = nodos)
+arcos2 = matrix(c(
   "edad_gpo",       "escolaridad",
   "escolaridad",    "ingreso_gpo",
   "escolaridad",    "ocupacion",
@@ -128,7 +128,7 @@ arcos2 <- matrix(c(
   "ingreso_gpo",    "asalto_tp",
   "grupo_tp",       "asalto_tp"),
   byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
-arcs(dag2) <- arcos2
+arcs(dag2) = arcos2
 
 graphviz.plot(dag2, shape = "ellipse")
 ```
@@ -152,8 +152,8 @@ sociodemográficas siguen presentes, pero aquí el contexto geográfico es el pr
 | `tam_loc → asalto_tp` | La incidencia delictiva varía según el tamaño de la localidad. |
 
 ```{r}
-dag3 <- empty.graph(nodes = nodos)
-arcos3 <- matrix(c(
+dag3 = empty.graph(nodes = nodos)
+arcos3 = matrix(c(
   "tam_loc",      "escolaridad",      # el contexto geográfico como raíz
   "tam_loc",      "ingreso_gpo",
   "tam_loc",      "grupo_tp",
@@ -167,8 +167,114 @@ arcos3 <- matrix(c(
   "grupo_tp",     "perc_eficiencia",
   "grupo_tp",     "asalto_tp"),
   byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
-arcs(dag3) <- arcos3
+arcs(dag3) = arcos3
 
 graphviz.plot(dag3, shape = "ellipse")
 ```
+## Ajuste de las redes bayesianas
+
+Para ajustar una red con `bnlearn` y calcular su score, los datos **no pueden contener
+valores faltantes**: el algoritmo requiere observaciones completas. Por eso construimos
+una versión de la base restringida a los casos completos en las variables de interés.
+
+Esta decisión tiene dos justificaciones. La primera es práctica: sin casos completos el
+ajuste no es posible. La segunda hace **comparables** a las tres redes: al evaluarlas
+todas sobre exactamente la misma base, sus scores se calculan sobre el mismo número de
+observaciones y pueden contrastarse en igualdad de condiciones. Un BIC calculado sobre
+distinto número de filas no sería comparable.
+
+Cabe reconocer que descartar las filas con faltantes puede introducir un sesgo leve, ya
+que quienes no respondieron cierta pregunta no son necesariamente un grupo aleatorio
+—buena parte de los `NA` provienen de `ocupacion`, que solo aplica a quienes trabajan—.
+Mantenemos el criterio de no imputar seguido en la etapa de limpieza, y lo señalamos como
+una limitación del análisis.
+
+```{r}
+d_completo = d[complete.cases(d[, nodos]), nodos]
+d_completo = droplevels(d_completo)
+
+cat("Filas originales:", nrow(d), "\n")
+cat("Filas con casos completos:", nrow(d_completo), "\n")
+```
+### Construcción de las tres redes
+
+Ajustamos cada DAG a los datos completos mediante estimación por máxima verosimilitud
+(`method = "mle"`), obteniendo las tres redes bayesianas correspondientes a las
+estructuras propuestas.
+
+```{r}
+bn1 = bn.fit(dag1, data = d_completo, method = "mle")
+bn2 = bn.fit(dag2, data = d_completo, method = "mle")
+bn3 = bn.fit(dag3, data = d_completo, method = "mle")
+```
+
+### Comparación de las tres estructuras
+
+Para decidir cuál de las tres estructuras se ajusta mejor a los datos, calculamos dos
+criterios de información sobre cada DAG: **BIC** y **AIC**. Ambos miden la calidad del
+ajuste penalizando la complejidad del modelo (el número de parámetros), de modo que
+premian a la red que explica bien los datos sin arcos innecesarios. En la convención de
+`bnlearn`, un valor **mayor** (menos negativo) indica un **mejor** ajuste. Las tres redes
+se evalúan sobre la misma base de casos completos, lo que hace los valores comparables.
+
+```{r}
+resultados = data.frame(
+  red = c("DAG 1", "DAG 2", "DAG 3"),
+  BIC = c(score(dag1, data = d_completo, type = "bic"),
+          score(dag2, data = d_completo, type = "bic"),
+          score(dag3, data = d_completo, type = "bic")),
+  AIC = c(score(dag1, data = d_completo, type = "aic"),
+          score(dag2, data = d_completo, type = "aic"),
+          score(dag3, data = d_completo, type = "aic"))
+)
+resultados
+```
+
+La tabla deja fuera a la **DAG 1** de inmediato: es la peor por ambos criterios, con una
+distancia amplia respecto a las otras dos (su BIC es unos 600 puntos menor que el de la
+DAG 3). La hipótesis de que las características sociodemográficas explican por sí solas el
+uso y la percepción del transporte no se sostiene frente a los datos.
+
+Entre la DAG 2 y la DAG 3 el resultado es similar. Por **AIC** gana la DAG 2 (−6355.68 contra −6362.66), pero por **BIC** gana la DAG 3 (−6641.31 contra −6690.97). La discrepancia no es casual: el BIC penaliza la complejidad más que el AIC, y la DAG 2 tiene más arcos. El AIC, más permisivo, premia a la DAG 2 por ajustar un poco mejor; el BIC castiga esos arcos de más y se queda con la DAG 3.
+
+Nos quedamos con la **DAG 3** como mejor estructura. Primero, para selección de estructura el BIC es el criterio de referencia, precisamente porque prefiere modelos más simples y menos propensos al sobreajuste. Segundo, la diferencia en AIC entre la DAG 2 y la DAG 3 es mínima (menos de 7 puntos), de modo que optar por la DAG 3 no sacrifica prácticamente nada de ajuste. La DAG 3 pone al tamaño de localidad como causa estructural del sistema, lo que es razonable en un país donde la oferta de transporte —y el metro en particular— se concentra en las zonas urbanas grandes.
+
+## Significancia de las dependencias
+
+Una vez elegida la DAG 3, evaluamos si las relaciones de dependencia que propone se
+sostienen en los datos. Con `arc.strength` medimos la fuerza de cada arco mediante el
+criterio de información mutua (`"mi"`): para cada relación se obtiene un p-valor que
+prueba la hipótesis de independencia entre las dos variables (dado el resto de sus
+padres). Un p-valor pequeño (por debajo de 0.05) indica que la dependencia es
+**significativa** y que el arco está justificado; un p-valor alto sugiere que esa
+relación es débil o prescindible.
+
+```{r}
+arc.strength(dag3, data = d_completo, criterion = "mi")
+```
+
+Para ver una dependencia más de cerca, tomamos uno de los arcos y lo ponemos a prueba con
+`ci.test`, aplicando las dos pruebas que vimos en clase: información mutua (`"mi"`) y
+ji-cuadrada (`"x2"`). Elegimos `grupo_tp → asalto_tp` porque es el que más nos interesa
+para la query 4. En la DAG 3, `asalto_tp` también depende de `tam_loc`, así que
+condicionamos sobre esa variable: la idea es checar si el tipo de transporte público y el
+asalto siguen relacionados incluso después de tomar en cuenta el tamaño de la localidad.
+
+```{r}
+ci.test("grupo_tp", "asalto_tp", "tam_loc", test = "mi", data = d_completo)
+ci.test("grupo_tp", "asalto_tp", "tam_loc", test = "x2", data = d_completo)
+```
+
+Las dos pruebas coinciden. La de información mutua da un p-valor de 0.0078, y la ji-cuadrada de Pearson arroja un p-valor de 0.0047. Ambos quedan por debajo del nivel de significancia de 0.05, así que en los dos casos rechazamos la hipótesis nula de independencia.
+
+En otras palabras probamos si el asalto en TP está ligado al tipo de transporte que usa la
+persona, o si ambas cosas solo parecían relacionarse por dónde vive (si en las ciudades
+grandes hubiera a la vez más metro y más delincuencia, la relación sería una ilusión del
+tamaño de localidad). Al condicionar sobre `tam_loc` descontamos ese efecto, y la relación
+sigue ahí: `grupo_tp` aporta información propia sobre el riesgo de asalto. Que las dos
+pruebas coincidan refuerza la conclusión y respalda mantener el arco. Esta dependencia es
+además la base de la query 4.
+
+
+
 

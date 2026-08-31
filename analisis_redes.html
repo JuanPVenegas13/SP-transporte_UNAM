@@ -2218,6 +2218,12 @@ vertical-align: -.125em;
   <li><a href="#dag-2-las-percepciones-condicionan-la-elección-de-transporte" id="toc-dag-2-las-percepciones-condicionan-la-elección-de-transporte" class="nav-link" data-scroll-target="#dag-2-las-percepciones-condicionan-la-elección-de-transporte">DAG 2 — Las percepciones condicionan la elección de transporte</a></li>
   <li><a href="#dag-3-el-contexto-geográfico-como-causa-estructural" id="toc-dag-3-el-contexto-geográfico-como-causa-estructural" class="nav-link" data-scroll-target="#dag-3-el-contexto-geográfico-como-causa-estructural">DAG 3 — El contexto geográfico como causa estructural</a></li>
   </ul></li>
+  <li><a href="#ajuste-de-las-redes-bayesianas" id="toc-ajuste-de-las-redes-bayesianas" class="nav-link" data-scroll-target="#ajuste-de-las-redes-bayesianas">Ajuste de las redes bayesianas</a>
+  <ul class="collapse">
+  <li><a href="#construcción-de-las-tres-redes" id="toc-construcción-de-las-tres-redes" class="nav-link" data-scroll-target="#construcción-de-las-tres-redes">Construcción de las tres redes</a></li>
+  <li><a href="#comparación-de-las-tres-estructuras" id="toc-comparación-de-las-tres-estructuras" class="nav-link" data-scroll-target="#comparación-de-las-tres-estructuras">Comparación de las tres estructuras</a></li>
+  </ul></li>
+  <li><a href="#significancia-de-las-dependencias" id="toc-significancia-de-las-dependencias" class="nav-link" data-scroll-target="#significancia-de-las-dependencias">Significancia de las dependencias</a></li>
   </ul>
 </nav>
 </div>
@@ -2254,7 +2260,7 @@ vertical-align: -.125em;
 <p>Leemos la base final construida en la etapa de Python. Los nodos vienen como texto, así que <code>stringsAsFactors = TRUE</code> los convierte en factores directamente.</p>
 <div class="cell">
 <div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">library</span>(bnlearn)</span>
-<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>d <span class="ot">&lt;-</span> <span class="fu">read.csv</span>(<span class="st">&quot;data/processed/enmt_bn_final.csv&quot;</span>, <span class="at">stringsAsFactors =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>d <span class="ot">=</span> <span class="fu">read.csv</span>(<span class="st">&quot;data/processed/enmt_bn_final.csv&quot;</span>, <span class="at">stringsAsFactors =</span> <span class="cn">TRUE</span>)</span>
 <span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="fu">str</span>(d)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stdout">
 <pre><code>&#39;data.frame&#39;:   1191 obs. of  20 variables:
@@ -2285,10 +2291,10 @@ vertical-align: -.125em;
 <p>Al leer el CSV, R ordena los niveles de cada factor <strong>alfabéticamente</strong>, lo que no respeta el orden lógico de las variables ordinales. Por ejemplo, <code>ingreso_gpo</code> queda como <code>hasta_2_sm &lt; mas_de_2_sm &lt; sin_ingreso</code>, cuando el orden con sentido es <code>sin_ingreso &lt; hasta_2_sm &lt; mas_de_2_sm</code>.</p>
 <p>Fijamos manualmente el orden de los factores ordinales que intervienen en las queries. Esto importa sobre todo para <strong>Q4</strong>, que compara el riesgo de asalto según se gane “más o menos” que el ingreso promedio: sin el orden correcto, la interpretación de la variable pierde sentido. El orden previsto de cada nodo está documentado en <code>enmt_bn_codebook.csv</code>, columna <code>niveles_en_orden</code>.</p>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>d<span class="sc">$</span>ingreso_gpo <span class="ot">&lt;-</span> <span class="fu">factor</span>(d<span class="sc">$</span>ingreso_gpo,</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>d<span class="sc">$</span>ingreso_gpo <span class="ot">=</span> <span class="fu">factor</span>(d<span class="sc">$</span>ingreso_gpo,</span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>                        <span class="at">levels =</span> <span class="fu">c</span>(<span class="st">&quot;sin_ingreso&quot;</span>, <span class="st">&quot;hasta_2_sm&quot;</span>, <span class="st">&quot;mas_de_2_sm&quot;</span>))</span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>d<span class="sc">$</span>ingreso_bin <span class="ot">&lt;-</span> <span class="fu">factor</span>(d<span class="sc">$</span>ingreso_bin, <span class="at">levels =</span> <span class="fu">c</span>(<span class="st">&quot;bajo&quot;</span>, <span class="st">&quot;alto&quot;</span>))</span>
-<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>d<span class="sc">$</span>escolaridad <span class="ot">&lt;-</span> <span class="fu">factor</span>(d<span class="sc">$</span>escolaridad,</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>d<span class="sc">$</span>ingreso_bin <span class="ot">=</span> <span class="fu">factor</span>(d<span class="sc">$</span>ingreso_bin, <span class="at">levels =</span> <span class="fu">c</span>(<span class="st">&quot;bajo&quot;</span>, <span class="st">&quot;alto&quot;</span>))</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>d<span class="sc">$</span>escolaridad <span class="ot">=</span> <span class="fu">factor</span>(d<span class="sc">$</span>escolaridad,</span>
 <span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>                        <span class="at">levels =</span> <span class="fu">c</span>(<span class="st">&quot;basica&quot;</span>, <span class="st">&quot;media_superior&quot;</span>, <span class="st">&quot;superior&quot;</span>))</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 </div>
 </section>
@@ -2353,12 +2359,12 @@ vertical-align: -.125em;
 </tbody>
 </table>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>nodos <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">&quot;edad_gpo&quot;</span>, <span class="st">&quot;escolaridad&quot;</span>, <span class="st">&quot;ingreso_gpo&quot;</span>, <span class="st">&quot;ocupacion&quot;</span>, <span class="st">&quot;tam_loc&quot;</span>,</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a>nodos <span class="ot">=</span> <span class="fu">c</span>(<span class="st">&quot;edad_gpo&quot;</span>, <span class="st">&quot;escolaridad&quot;</span>, <span class="st">&quot;ingreso_gpo&quot;</span>, <span class="st">&quot;ocupacion&quot;</span>, <span class="st">&quot;tam_loc&quot;</span>,</span>
 <span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>           <span class="st">&quot;grupo_tp&quot;</span>, <span class="st">&quot;modo_principal&quot;</span>,</span>
 <span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>           <span class="st">&quot;perc_seguridad&quot;</span>, <span class="st">&quot;perc_eficiencia&quot;</span>, <span class="st">&quot;perc_costo&quot;</span>, <span class="st">&quot;asalto_tp&quot;</span>)</span>
 <span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>dag1 <span class="ot">&lt;-</span> <span class="fu">empty.graph</span>(<span class="at">nodes =</span> nodos)</span>
-<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>arcos1 <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>dag1 <span class="ot">=</span> <span class="fu">empty.graph</span>(<span class="at">nodes =</span> nodos)</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>arcos1 <span class="ot">=</span> <span class="fu">matrix</span>(<span class="fu">c</span>(</span>
 <span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;edad_gpo&quot;</span>,     <span class="st">&quot;escolaridad&quot;</span>,      <span class="co"># la generación influye en la escolaridad</span></span>
 <span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;escolaridad&quot;</span>,  <span class="st">&quot;ingreso_gpo&quot;</span>,      <span class="co"># más estudios -&gt; más ingreso</span></span>
 <span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;escolaridad&quot;</span>,  <span class="st">&quot;ocupacion&quot;</span>,        <span class="co"># estudios -&gt; tipo de ocupación</span></span>
@@ -2374,7 +2380,7 @@ vertical-align: -.125em;
 <span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;ingreso_gpo&quot;</span>,  <span class="st">&quot;asalto_tp&quot;</span>,        <span class="co"># Q4: el ingreso y el asalto</span></span>
 <span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;grupo_tp&quot;</span>,     <span class="st">&quot;asalto_tp&quot;</span>),</span>
 <span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a>  <span class="at">byrow =</span> <span class="cn">TRUE</span>, <span class="at">ncol =</span> <span class="dv">2</span>, <span class="at">dimnames =</span> <span class="fu">list</span>(<span class="cn">NULL</span>, <span class="fu">c</span>(<span class="st">&quot;from&quot;</span>, <span class="st">&quot;to&quot;</span>)))</span>
-<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="fu">arcs</span>(dag1) <span class="ot">&lt;-</span> arcos1</span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a><span class="fu">arcs</span>(dag1) <span class="ot">=</span> arcos1</span>
 <span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a><span class="fu">graphviz.plot</span>(dag1, <span class="at">shape =</span> <span class="st">&quot;ellipse&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output cell-output-stderr">
@@ -2436,8 +2442,8 @@ vertical-align: -.125em;
 </tbody>
 </table>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>dag2 <span class="ot">&lt;-</span> <span class="fu">empty.graph</span>(<span class="at">nodes =</span> nodos)</span>
-<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>arcos2 <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb6"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>dag2 <span class="ot">=</span> <span class="fu">empty.graph</span>(<span class="at">nodes =</span> nodos)</span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>arcos2 <span class="ot">=</span> <span class="fu">matrix</span>(<span class="fu">c</span>(</span>
 <span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;edad_gpo&quot;</span>,       <span class="st">&quot;escolaridad&quot;</span>,</span>
 <span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;escolaridad&quot;</span>,    <span class="st">&quot;ingreso_gpo&quot;</span>,</span>
 <span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;escolaridad&quot;</span>,    <span class="st">&quot;ocupacion&quot;</span>,</span>
@@ -2451,7 +2457,7 @@ vertical-align: -.125em;
 <span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;ingreso_gpo&quot;</span>,    <span class="st">&quot;asalto_tp&quot;</span>,</span>
 <span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;grupo_tp&quot;</span>,       <span class="st">&quot;asalto_tp&quot;</span>),</span>
 <span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">byrow =</span> <span class="cn">TRUE</span>, <span class="at">ncol =</span> <span class="dv">2</span>, <span class="at">dimnames =</span> <span class="fu">list</span>(<span class="cn">NULL</span>, <span class="fu">c</span>(<span class="st">&quot;from&quot;</span>, <span class="st">&quot;to&quot;</span>)))</span>
-<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="fu">arcs</span>(dag2) <span class="ot">&lt;-</span> arcos2</span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="fu">arcs</span>(dag2) <span class="ot">=</span> arcos2</span>
 <span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="fu">graphviz.plot</span>(dag2, <span class="at">shape =</span> <span class="st">&quot;ellipse&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output-display">
@@ -2509,8 +2515,8 @@ vertical-align: -.125em;
 </tbody>
 </table>
 <div class="cell">
-<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>dag3 <span class="ot">&lt;-</span> <span class="fu">empty.graph</span>(<span class="at">nodes =</span> nodos)</span>
-<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>arcos3 <span class="ot">&lt;-</span> <span class="fu">matrix</span>(<span class="fu">c</span>(</span>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>dag3 <span class="ot">=</span> <span class="fu">empty.graph</span>(<span class="at">nodes =</span> nodos)</span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>arcos3 <span class="ot">=</span> <span class="fu">matrix</span>(<span class="fu">c</span>(</span>
 <span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;tam_loc&quot;</span>,      <span class="st">&quot;escolaridad&quot;</span>,      <span class="co"># el contexto geográfico como raíz</span></span>
 <span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;tam_loc&quot;</span>,      <span class="st">&quot;ingreso_gpo&quot;</span>,</span>
 <span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;tam_loc&quot;</span>,      <span class="st">&quot;grupo_tp&quot;</span>,</span>
@@ -2524,7 +2530,7 @@ vertical-align: -.125em;
 <span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;grupo_tp&quot;</span>,     <span class="st">&quot;perc_eficiencia&quot;</span>,</span>
 <span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a>  <span class="st">&quot;grupo_tp&quot;</span>,     <span class="st">&quot;asalto_tp&quot;</span>),</span>
 <span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a>  <span class="at">byrow =</span> <span class="cn">TRUE</span>, <span class="at">ncol =</span> <span class="dv">2</span>, <span class="at">dimnames =</span> <span class="fu">list</span>(<span class="cn">NULL</span>, <span class="fu">c</span>(<span class="st">&quot;from&quot;</span>, <span class="st">&quot;to&quot;</span>)))</span>
-<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="fu">arcs</span>(dag3) <span class="ot">&lt;-</span> arcos3</span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a><span class="fu">arcs</span>(dag3) <span class="ot">=</span> arcos3</span>
 <span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="fu">graphviz.plot</span>(dag3, <span class="at">shape =</span> <span class="st">&quot;ellipse&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
 <div class="cell-output-display">
@@ -2536,6 +2542,188 @@ vertical-align: -.125em;
 </div>
 </div>
 </section>
+</section>
+<section id="ajuste-de-las-redes-bayesianas" class="level2">
+<h2 class="anchored" data-anchor-id="ajuste-de-las-redes-bayesianas">Ajuste de las redes bayesianas</h2>
+<p>Para ajustar una red con <code>bnlearn</code> y calcular su score, los datos <strong>no pueden contener valores faltantes</strong>: el algoritmo requiere observaciones completas. Por eso construimos una versión de la base restringida a los casos completos en las variables de interés.</p>
+<p>Esta decisión tiene dos justificaciones. La primera es práctica: sin casos completos el ajuste no es posible. La segunda hace <strong>comparables</strong> a las tres redes: al evaluarlas todas sobre exactamente la misma base, sus scores se calculan sobre el mismo número de observaciones y pueden contrastarse en igualdad de condiciones. Un BIC calculado sobre distinto número de filas no sería comparable.</p>
+<p>Cabe reconocer que descartar las filas con faltantes puede introducir un sesgo leve, ya que quienes no respondieron cierta pregunta no son necesariamente un grupo aleatorio —buena parte de los <code>NA</code> provienen de <code>ocupacion</code>, que solo aplica a quienes trabajan—. Mantenemos el criterio de no imputar seguido en la etapa de limpieza, y lo señalamos como una limitación del análisis.</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb8"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>d_completo <span class="ot">=</span> d[<span class="fu">complete.cases</span>(d[, nodos]), nodos]</span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>d_completo <span class="ot">=</span> <span class="fu">droplevels</span>(d_completo)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Filas originales:&quot;</span>, <span class="fu">nrow</span>(d), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Filas originales: 1191 </code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb10"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span>(<span class="st">&quot;Filas con casos completos:&quot;</span>, <span class="fu">nrow</span>(d_completo), <span class="st">&quot;</span><span class="sc">\n</span><span class="st">&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Filas con casos completos: 686 </code></pre>
+</div>
+</div>
+<section id="construcción-de-las-tres-redes" class="level3">
+<h3 class="anchored" data-anchor-id="construcción-de-las-tres-redes">Construcción de las tres redes</h3>
+<p>Ajustamos cada DAG a los datos completos mediante estimación por máxima verosimilitud (<code>method = &quot;mle&quot;</code>), obteniendo las tres redes bayesianas correspondientes a las estructuras propuestas.</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb12"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>bn1 <span class="ot">=</span> <span class="fu">bn.fit</span>(dag1, <span class="at">data =</span> d_completo, <span class="at">method =</span> <span class="st">&quot;mle&quot;</span>)</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>bn2 <span class="ot">=</span> <span class="fu">bn.fit</span>(dag2, <span class="at">data =</span> d_completo, <span class="at">method =</span> <span class="st">&quot;mle&quot;</span>)</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>bn3 <span class="ot">=</span> <span class="fu">bn.fit</span>(dag3, <span class="at">data =</span> d_completo, <span class="at">method =</span> <span class="st">&quot;mle&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+</div>
+</section>
+<section id="comparación-de-las-tres-estructuras" class="level3">
+<h3 class="anchored" data-anchor-id="comparación-de-las-tres-estructuras">Comparación de las tres estructuras</h3>
+<p>Para decidir cuál de las tres estructuras se ajusta mejor a los datos, calculamos dos criterios de información sobre cada DAG: <strong>BIC</strong> y <strong>AIC</strong>. Ambos miden la calidad del ajuste penalizando la complejidad del modelo (el número de parámetros), de modo que premian a la red que explica bien los datos sin arcos innecesarios. En la convención de <code>bnlearn</code>, un valor <strong>mayor</strong> (menos negativo) indica un <strong>mejor</strong> ajuste. Las tres redes se evalúan sobre la misma base de casos completos, lo que hace los valores comparables.</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>resultados <span class="ot">=</span> <span class="fu">data.frame</span>(</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  <span class="at">red =</span> <span class="fu">c</span>(<span class="st">&quot;DAG 1&quot;</span>, <span class="st">&quot;DAG 2&quot;</span>, <span class="st">&quot;DAG 3&quot;</span>),</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="at">BIC =</span> <span class="fu">c</span>(<span class="fu">score</span>(dag1, <span class="at">data =</span> d_completo, <span class="at">type =</span> <span class="st">&quot;bic&quot;</span>),</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>          <span class="fu">score</span>(dag2, <span class="at">data =</span> d_completo, <span class="at">type =</span> <span class="st">&quot;bic&quot;</span>),</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>          <span class="fu">score</span>(dag3, <span class="at">data =</span> d_completo, <span class="at">type =</span> <span class="st">&quot;bic&quot;</span>)),</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>  <span class="at">AIC =</span> <span class="fu">c</span>(<span class="fu">score</span>(dag1, <span class="at">data =</span> d_completo, <span class="at">type =</span> <span class="st">&quot;aic&quot;</span>),</span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>          <span class="fu">score</span>(dag2, <span class="at">data =</span> d_completo, <span class="at">type =</span> <span class="st">&quot;aic&quot;</span>),</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>          <span class="fu">score</span>(dag3, <span class="at">data =</span> d_completo, <span class="at">type =</span> <span class="st">&quot;aic&quot;</span>))</span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>)</span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>resultados</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div class="kable-table">
+<table class="caption-top table table-sm table-striped small">
+<thead>
+<tr class="header">
+<th style="text-align: left;">red</th>
+<th style="text-align: right;">BIC</th>
+<th style="text-align: right;">AIC</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">DAG 1</td>
+<td style="text-align: right;">-7298.184</td>
+<td style="text-align: right;">-6480.361</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">DAG 2</td>
+<td style="text-align: right;">-6690.968</td>
+<td style="text-align: right;">-6355.683</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">DAG 3</td>
+<td style="text-align: right;">-6641.312</td>
+<td style="text-align: right;">-6362.663</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<p>La tabla deja fuera a la <strong>DAG 1</strong> de inmediato: es la peor por ambos criterios, con una distancia amplia respecto a las otras dos (su BIC es unos 600 puntos menor que el de la DAG 3). La hipótesis de que las características sociodemográficas explican por sí solas el uso y la percepción del transporte no se sostiene frente a los datos.</p>
+<p>Entre la DAG 2 y la DAG 3 el resultado es similar. Por <strong>AIC</strong> gana la DAG 2 (−6355.68 contra −6362.66), pero por <strong>BIC</strong> gana la DAG 3 (−6641.31 contra −6690.97). La discrepancia no es casual: el BIC penaliza la complejidad más que el AIC, y la DAG 2 tiene más arcos. El AIC, más permisivo, premia a la DAG 2 por ajustar un poco mejor; el BIC castiga esos arcos de más y se queda con la DAG 3.</p>
+<p>Nos quedamos con la <strong>DAG 3</strong> como mejor estructura. Primero, para selección de estructura el BIC es el criterio de referencia, precisamente porque prefiere modelos más simples y menos propensos al sobreajuste. Segundo, la diferencia en AIC entre la DAG 2 y la DAG 3 es mínima (menos de 7 puntos), de modo que optar por la DAG 3 no sacrifica prácticamente nada de ajuste. La DAG 3 pone al tamaño de localidad como causa estructural del sistema, lo que es razonable en un país donde la oferta de transporte —y el metro en particular— se concentra en las zonas urbanas grandes.</p>
+</section>
+</section>
+<section id="significancia-de-las-dependencias" class="level2">
+<h2 class="anchored" data-anchor-id="significancia-de-las-dependencias">Significancia de las dependencias</h2>
+<p>Una vez elegida la DAG 3, evaluamos si las relaciones de dependencia que propone se sostienen en los datos. Con <code>arc.strength</code> medimos la fuerza de cada arco mediante el criterio de información mutua (<code>&quot;mi&quot;</code>): para cada relación se obtiene un p-valor que prueba la hipótesis de independencia entre las dos variables (dado el resto de sus padres). Un p-valor pequeño (por debajo de 0.05) indica que la dependencia es <strong>significativa</strong> y que el arco está justificado; un p-valor alto sugiere que esa relación es débil o prescindible.</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb14"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a><span class="fu">arc.strength</span>(dag3, <span class="at">data =</span> d_completo, <span class="at">criterion =</span> <span class="st">&quot;mi&quot;</span>)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output-display">
+<div class="kable-table">
+<table class="caption-top table table-sm table-striped small">
+<thead>
+<tr class="header">
+<th style="text-align: left;">from</th>
+<th style="text-align: left;">to</th>
+<th style="text-align: right;">strength</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td style="text-align: left;">tam_loc</td>
+<td style="text-align: left;">escolaridad</td>
+<td style="text-align: right;">0.0000088</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">tam_loc</td>
+<td style="text-align: left;">ingreso_gpo</td>
+<td style="text-align: right;">0.0170442</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">tam_loc</td>
+<td style="text-align: left;">grupo_tp</td>
+<td style="text-align: right;">0.0000000</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">tam_loc</td>
+<td style="text-align: left;">modo_principal</td>
+<td style="text-align: right;">0.0000574</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">tam_loc</td>
+<td style="text-align: left;">asalto_tp</td>
+<td style="text-align: right;">0.5111252</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">edad_gpo</td>
+<td style="text-align: left;">ocupacion</td>
+<td style="text-align: right;">0.0481691</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">escolaridad</td>
+<td style="text-align: left;">ocupacion</td>
+<td style="text-align: right;">0.0000000</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">ingreso_gpo</td>
+<td style="text-align: left;">perc_costo</td>
+<td style="text-align: right;">0.3257399</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">ocupacion</td>
+<td style="text-align: left;">perc_costo</td>
+<td style="text-align: right;">0.7954923</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">grupo_tp</td>
+<td style="text-align: left;">perc_seguridad</td>
+<td style="text-align: right;">0.0333688</td>
+</tr>
+<tr class="odd">
+<td style="text-align: left;">grupo_tp</td>
+<td style="text-align: left;">perc_eficiencia</td>
+<td style="text-align: right;">0.0652741</td>
+</tr>
+<tr class="even">
+<td style="text-align: left;">grupo_tp</td>
+<td style="text-align: left;">asalto_tp</td>
+<td style="text-align: right;">0.0077559</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<p>Para ver una dependencia más de cerca, tomamos uno de los arcos y lo ponemos a prueba con <code>ci.test</code>, aplicando las dos pruebas que vimos en clase: información mutua (<code>&quot;mi&quot;</code>) y ji-cuadrada (<code>&quot;x2&quot;</code>). Elegimos <code>grupo_tp → asalto_tp</code> porque es el que más nos interesa para la query 4. En la DAG 3, <code>asalto_tp</code> también depende de <code>tam_loc</code>, así que condicionamos sobre esa variable: la idea es checar si el tipo de transporte público y el asalto siguen relacionados incluso después de tomar en cuenta el tamaño de la localidad.</p>
+<div class="cell">
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ci.test</span>(<span class="st">&quot;grupo_tp&quot;</span>, <span class="st">&quot;asalto_tp&quot;</span>, <span class="st">&quot;tam_loc&quot;</span>, <span class="at">test =</span> <span class="st">&quot;mi&quot;</span>, <span class="at">data =</span> d_completo)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>
+    Mutual Information (disc.)
+
+data:  grupo_tp ~ asalto_tp | tam_loc
+mi = 20.78, df = 8, p-value = 0.007756
+alternative hypothesis: true value is greater than 0</code></pre>
+</div>
+<div class="code-copy-outer-scaffold"><div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ci.test</span>(<span class="st">&quot;grupo_tp&quot;</span>, <span class="st">&quot;asalto_tp&quot;</span>, <span class="st">&quot;tam_loc&quot;</span>, <span class="at">test =</span> <span class="st">&quot;x2&quot;</span>, <span class="at">data =</span> d_completo)</span></code></pre></div><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>
+    Pearson&#39;s X^2
+
+data:  grupo_tp ~ asalto_tp | tam_loc
+x2 = 22.104, df = 8, p-value = 0.004726
+alternative hypothesis: true value is greater than 0</code></pre>
+</div>
+</div>
+<p>Las dos pruebas coinciden. La de información mutua da un p-valor de 0.0078, y la ji-cuadrada de Pearson arroja un p-valor de 0.0047. Ambos quedan por debajo del nivel de significancia de 0.05, así que en los dos casos rechazamos la hipótesis nula de independencia.</p>
+<p>En otras palabras probamos si el asalto en TP está ligado al tipo de transporte que usa la persona, o si ambas cosas solo parecían relacionarse por dónde vive (si en las ciudades grandes hubiera a la vez más metro y más delincuencia, la relación sería una ilusión del tamaño de localidad). Al condicionar sobre <code>tam_loc</code> descontamos ese efecto, y la relación sigue ahí: <code>grupo_tp</code> aporta información propia sobre el riesgo de asalto. Que las dos pruebas coincidan refuerza la conclusión y respalda mantener el arco. Esta dependencia es además la base de la query 4.</p>
 </section>
 
 </main>
