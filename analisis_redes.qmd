@@ -1,0 +1,408 @@
+---
+title: "Redes Bayesianas Multinomiales — Transporte ENMT"
+subtitle: "Análisis de métodos de razonamiento e incertidumbre, Gpo 101 - AD 2026"
+author: "Arie Gonzalez"
+format:
+    html:
+        toc: true
+        html-math-method: katex
+        embed-resources: true
+        df-print: kable
+editor: source
+---
+
+## Datos
+
+Leemos la base final construida en la etapa de Python. Los nodos vienen como texto, así que `stringsAsFactors = TRUE` los convierte en factores directamente.
+
+```{r}
+library(bnlearn)
+d = read.csv("data/processed/enmt_bn_final.csv", stringsAsFactors = TRUE)
+str(d)
+```
+
+### Orden de los niveles
+
+Al leer el CSV, R ordena los niveles de cada factor **alfabéticamente**, lo que no respeta el orden lógico de las variables ordinales. Por ejemplo, `ingreso_gpo` queda como `hasta_2_sm < mas_de_2_sm < sin_ingreso`, cuando el orden con sentido es `sin_ingreso < hasta_2_sm < mas_de_2_sm`.
+
+Fijamos manualmente el orden de los factores ordinales que intervienen en las queries. Esto importa sobre todo para **Q4**, que compara el riesgo de asalto según se gane "más o menos" que el ingreso promedio: sin el orden correcto, la interpretación de la variable pierde sentido. El orden previsto de cada nodo está documentado en `enmt_bn_codebook.csv`, columna `niveles_en_orden`.
+
+```{r}
+d$ingreso_gpo = factor(d$ingreso_gpo,
+                        levels = c("sin_ingreso", "hasta_2_sm", "mas_de_2_sm"))
+d$ingreso_bin = factor(d$ingreso_bin, levels = c("bajo", "alto"))
+d$escolaridad = factor(d$escolaridad,
+                        levels = c("basica", "media_superior", "superior"))
+```
+
+## Propuesta de estructuras (DAGs)
+
+Una red bayesiana parte de un **grafo acíclico dirigido (DAG)** que codifica las relaciones de dependencia entre las variables: cada arco `A → B` afirma que `A` influye directamente sobre `B`. Como no conocemos de antemano la estructura verdadera, proponemos **tres DAGs distintas** —tres hipótesis competidoras sobre cómo se relacionan las variables— que más adelante compararemos con criterios de ajuste (BIC/AIC) para elegir la más adecuada a los datos.
+
+Las **variables de interés** son los nodos que intervienen en las cuatro queries asignadas, más un conjunto de covariables sociodemográficas de contexto:
+
+- **Sociodemográficas:** `edad_gpo`, `escolaridad`, `ingreso_gpo`, `ocupacion`, `tam_loc`.
+- **Uso de transporte:** `grupo_tp`, `modo_principal`.
+- **Percepción y victimización:** `perc_seguridad`, `perc_eficiencia`, `perc_costo`, `asalto_tp`.
+
+### DAG 1 — Las características sociodemográficas determinan el uso y la percepción
+
+La primera hipótesis plantea un flujo **de arriba hacia abajo**: los atributos de la persona (edad, escolaridad, ingreso, ocupación) y el contexto geográfico (tamaño de localidad) determinan **qué medio de transporte utiliza**, y el transporte utilizado determina, a su vez, **cómo percibe el servicio** y **su exposición al riesgo de asalto**. Es la estructura más natural desde la teoría social: las condiciones estructurales anteceden a las decisiones de movilidad, y estas a la experiencia.
+
+La siguiente tabla justifica cada arco propuesto:
+
+| Arco | Lectura |
+|------------------------------------|------------------------------------|
+| `edad_gpo → escolaridad` | La generación condiciona el nivel educativo alcanzado. |
+| `escolaridad → ingreso_gpo` | Mayor escolaridad se asocia a mayores ingresos. |
+| `escolaridad → ocupacion`, `edad_gpo → ocupacion` | La formación y la edad determinan el tipo de ocupación. |
+| `tam_loc → grupo_tp` | La oferta de transporte (p. ej. metro) depende del tamaño de la localidad. |
+| `ingreso_gpo → modo_principal`, `escolaridad → modo_principal`, `tam_loc → modo_principal` | La elección del modo principal responde a recursos, perfil y oferta local. |
+| `grupo_tp → perc_seguridad`, `grupo_tp → perc_eficiencia` | La experiencia con el tipo de transporte moldea su percepción. |
+| `modo_principal → perc_costo`, `ocupacion → perc_costo` | El modo usado y la ocupación influyen en cómo se percibe el costo. |
+| `ingreso_gpo → asalto_tp`, `grupo_tp → asalto_tp` | El ingreso y el tipo de transporte se relacionan con la exposición al asalto. |
+
+```{r}
+nodos = c("edad_gpo", "escolaridad", "ingreso_gpo", "ocupacion", "tam_loc",
+           "grupo_tp", "modo_principal",
+           "perc_seguridad", "perc_eficiencia", "perc_costo", "asalto_tp")
+
+dag1 = empty.graph(nodes = nodos)
+arcos1 = matrix(c(
+  "edad_gpo",     "escolaridad",      # la generación influye en la escolaridad
+  "escolaridad",  "ingreso_gpo",      # más estudios -> más ingreso
+  "escolaridad",  "ocupacion",        # estudios -> tipo de ocupación
+  "edad_gpo",     "ocupacion",
+  "tam_loc",      "grupo_tp",         # en ciudades grandes hay metro
+  "ingreso_gpo",  "modo_principal",   # ingreso -> auto vs. transporte público
+  "escolaridad",  "modo_principal",
+  "tam_loc",      "modo_principal",
+  "grupo_tp",     "perc_seguridad",   # el TP que usas moldea tu percepción
+  "grupo_tp",     "perc_eficiencia",
+  "modo_principal","perc_costo",
+  "ocupacion",    "perc_costo",       # la ocupación influye en cómo ves el costo
+  "ingreso_gpo",  "asalto_tp",        # Q4: el ingreso y el asalto
+  "grupo_tp",     "asalto_tp"),
+  byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
+arcs(dag1) = arcos1
+
+graphviz.plot(dag1, shape = "ellipse")
+```
+
+### DAG 2 — Las percepciones condicionan la elección de transporte
+
+La segunda hipótesis cuestiona el supuesto de la DAG 1 de que la percepción es
+únicamente un efecto del transporte usado. Aquí planteamos que la relación puede ir
+en sentido inverso: **la percepción de seguridad y de costo del transporte público
+influye en qué modo decide usar la persona**. Alguien que percibe el transporte
+público como inseguro puede optar por el automóvil o el taxi; alguien que lo percibe
+como barato puede preferirlo. Bajo esta lectura, las percepciones se ubican *antes*
+de la elección del modo, no después.
+
+Las variables sociodemográficas se conservan como causas de fondo, pero el orden entre
+percepción y uso de transporte se invierte respecto a la DAG 1.
+
+| Arco | Lectura |
+|---|---|
+| `edad_gpo → escolaridad`, `escolaridad → ingreso_gpo`, `escolaridad → ocupacion` | Estructura sociodemográfica de base (igual que en la DAG 1). |
+| `perc_seguridad → modo_principal`, `perc_costo → modo_principal` | Percibir el TP como inseguro o caro empuja hacia otros modos. |
+| `perc_seguridad → grupo_tp` | La percepción de seguridad influye en el tipo de TP que se usa. |
+| `ingreso_gpo → perc_costo` | Con menos ingreso, el mismo costo se percibe como más alto. |
+| `tam_loc → grupo_tp` | La oferta de transporte depende del tamaño de localidad. |
+| `ingreso_gpo → asalto_tp`, `grupo_tp → asalto_tp` | Ingreso y tipo de TP se relacionan con el riesgo de asalto. |
+| `perc_eficiencia → modo_principal` | Percibir el TP como eficiente favorece su uso como modo principal. |
+
+```{r}
+dag2 = empty.graph(nodes = nodos)
+arcos2 = matrix(c(
+  "edad_gpo",       "escolaridad",
+  "escolaridad",    "ingreso_gpo",
+  "escolaridad",    "ocupacion",
+  "edad_gpo",       "ocupacion",
+  "ingreso_gpo",    "perc_costo",       # el ingreso tiñe la percepción de costo
+  "perc_seguridad", "grupo_tp",         # percepción -> elección (invertido vs DAG 1)
+  "perc_seguridad", "modo_principal",
+  "perc_costo",     "modo_principal",
+  "perc_eficiencia","modo_principal",
+  "tam_loc",        "grupo_tp",
+  "ingreso_gpo",    "asalto_tp",
+  "grupo_tp",       "asalto_tp"),
+  byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
+arcs(dag2) = arcos2
+
+graphviz.plot(dag2, shape = "ellipse")
+```
+### DAG 3 — El contexto geográfico como causa estructural
+
+La tercera hipótesis pone en el centro al **tamaño de localidad** como causa de fondo
+de casi todo el sistema. El razonamiento: la oferta de transporte no está distribuida
+de forma homogénea en el país —el metro y el transporte masivo existen sobre todo en
+zonas urbanas grandes—, de modo que `tam_loc` determina qué modos están disponibles,
+qué tipo de TP se usa, y de forma indirecta las percepciones y el riesgo. Las variables
+sociodemográficas siguen presentes, pero aquí el contexto geográfico es el primer motor.
+
+| Arco | Lectura |
+|---|---|
+| `tam_loc → grupo_tp`, `tam_loc → modo_principal` | La oferta de transporte disponible depende del tipo de localidad. |
+| `tam_loc → ingreso_gpo` | El nivel de ingreso típico varía entre localidades grandes y pequeñas. |
+| `tam_loc → escolaridad` | El acceso educativo difiere según el tamaño de la localidad. |
+| `escolaridad → ocupacion`, `edad_gpo → ocupacion` | La ocupación depende de formación y edad. |
+| `grupo_tp → perc_seguridad`, `grupo_tp → perc_eficiencia`, `grupo_tp → asalto_tp` | El tipo de TP usado moldea percepciones y exposición. |
+| `ingreso_gpo → perc_costo`, `ocupacion → perc_costo` | Ingreso y ocupación tiñen la percepción del costo. |
+| `tam_loc → asalto_tp` | La incidencia delictiva varía según el tamaño de la localidad. |
+
+```{r}
+dag3 = empty.graph(nodes = nodos)
+arcos3 = matrix(c(
+  "tam_loc",      "escolaridad",      # el contexto geográfico como raíz
+  "tam_loc",      "ingreso_gpo",
+  "tam_loc",      "grupo_tp",
+  "tam_loc",      "modo_principal",
+  "tam_loc",      "asalto_tp",
+  "edad_gpo",     "ocupacion",
+  "escolaridad",  "ocupacion",
+  "ingreso_gpo",  "perc_costo",
+  "ocupacion",    "perc_costo",
+  "grupo_tp",     "perc_seguridad",
+  "grupo_tp",     "perc_eficiencia",
+  "grupo_tp",     "asalto_tp"),
+  byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
+arcs(dag3) = arcos3
+
+graphviz.plot(dag3, shape = "ellipse")
+```
+## Ajuste de las redes bayesianas
+
+Para ajustar una red con `bnlearn` y calcular su score, los datos **no pueden contener
+valores faltantes**: el algoritmo requiere observaciones completas. Por eso construimos
+una versión de la base restringida a los casos completos en las variables de interés.
+
+Esta decisión tiene dos justificaciones. La primera es práctica: sin casos completos el
+ajuste no es posible. La segunda hace **comparables** a las tres redes: al evaluarlas
+todas sobre exactamente la misma base, sus scores se calculan sobre el mismo número de
+observaciones y pueden contrastarse en igualdad de condiciones. Un BIC calculado sobre
+distinto número de filas no sería comparable.
+
+Cabe reconocer que descartar las filas con faltantes puede introducir un sesgo leve, ya
+que quienes no respondieron cierta pregunta no son necesariamente un grupo aleatorio
+—buena parte de los `NA` provienen de `ocupacion`, que solo aplica a quienes trabajan—.
+Mantenemos el criterio de no imputar seguido en la etapa de limpieza, y lo señalamos como
+una limitación del análisis.
+
+```{r}
+d_completo = d[complete.cases(d[, nodos]), nodos]
+d_completo = droplevels(d_completo)
+
+cat("Filas originales:", nrow(d), "\n")
+cat("Filas con casos completos:", nrow(d_completo), "\n")
+```
+### Construcción de las tres redes
+
+Ajustamos cada DAG a los datos completos mediante estimación por máxima verosimilitud
+(`method = "mle"`), obteniendo las tres redes bayesianas correspondientes a las
+estructuras propuestas.
+
+```{r}
+bn1 = bn.fit(dag1, data = d_completo, method = "mle")
+bn2 = bn.fit(dag2, data = d_completo, method = "mle")
+bn3 = bn.fit(dag3, data = d_completo, method = "mle")
+```
+
+### Comparación de las tres estructuras
+
+Para decidir cuál de las tres estructuras se ajusta mejor a los datos, calculamos dos
+criterios de información sobre cada DAG: **BIC** y **AIC**. Ambos miden la calidad del
+ajuste penalizando la complejidad del modelo (el número de parámetros), de modo que
+premian a la red que explica bien los datos sin arcos innecesarios. En la convención de
+`bnlearn`, un valor **mayor** (menos negativo) indica un **mejor** ajuste. Las tres redes
+se evalúan sobre la misma base de casos completos, lo que hace los valores comparables.
+
+```{r}
+resultados = data.frame(
+  red = c("DAG 1", "DAG 2", "DAG 3"),
+  BIC = c(score(dag1, data = d_completo, type = "bic"),
+          score(dag2, data = d_completo, type = "bic"),
+          score(dag3, data = d_completo, type = "bic")),
+  AIC = c(score(dag1, data = d_completo, type = "aic"),
+          score(dag2, data = d_completo, type = "aic"),
+          score(dag3, data = d_completo, type = "aic"))
+)
+resultados
+```
+
+La tabla deja fuera a la **DAG 1** de inmediato: es la peor por ambos criterios, con una
+distancia amplia respecto a las otras dos (su BIC es unos 600 puntos menor que el de la
+DAG 3). La hipótesis de que las características sociodemográficas explican por sí solas el
+uso y la percepción del transporte no se sostiene frente a los datos.
+
+Entre la DAG 2 y la DAG 3 el resultado es similar. Por **AIC** gana la DAG 2 (−6355.68 contra −6362.66), pero por **BIC** gana la DAG 3 (−6641.31 contra −6690.97). La discrepancia no es casual: el BIC penaliza la complejidad más que el AIC, y la DAG 2 tiene más arcos. El AIC, más permisivo, premia a la DAG 2 por ajustar un poco mejor; el BIC castiga esos arcos de más y se queda con la DAG 3.
+
+Nos quedamos con la **DAG 3** como mejor estructura. Primero, para selección de estructura el BIC es el criterio de referencia, precisamente porque prefiere modelos más simples y menos propensos al sobreajuste. Segundo, la diferencia en AIC entre la DAG 2 y la DAG 3 es mínima (menos de 7 puntos), de modo que optar por la DAG 3 no sacrifica prácticamente nada de ajuste. La DAG 3 pone al tamaño de localidad como causa estructural del sistema, lo que es razonable en un país donde la oferta de transporte —y el metro en particular— se concentra en las zonas urbanas grandes.
+
+## Significancia de las dependencias
+
+Una vez elegida la DAG 3, evaluamos si las relaciones de dependencia que propone se
+sostienen en los datos. Con `arc.strength` medimos la fuerza de cada arco mediante el
+criterio de información mutua (`"mi"`): para cada relación se obtiene un p-valor que
+prueba la hipótesis de independencia entre las dos variables (dado el resto de sus
+padres). Un p-valor pequeño (por debajo de 0.05) indica que la dependencia es
+**significativa** y que el arco está justificado; un p-valor alto sugiere que esa
+relación es débil o prescindible.
+
+```{r}
+arc.strength(dag3, data = d_completo, criterion = "mi")
+```
+
+Para ver una dependencia más de cerca, tomamos uno de los arcos y lo ponemos a prueba con
+`ci.test`, aplicando las dos pruebas que vimos en clase: información mutua (`"mi"`) y
+ji-cuadrada (`"x2"`). Elegimos `grupo_tp → asalto_tp` porque es el que más nos interesa
+para la query 4. En la DAG 3, `asalto_tp` también depende de `tam_loc`, así que
+condicionamos sobre esa variable: la idea es checar si el tipo de transporte público y el
+asalto siguen relacionados incluso después de tomar en cuenta el tamaño de la localidad.
+
+```{r}
+ci.test("grupo_tp", "asalto_tp", "tam_loc", test = "mi", data = d_completo)
+ci.test("grupo_tp", "asalto_tp", "tam_loc", test = "x2", data = d_completo)
+```
+
+Las dos pruebas coinciden. La de información mutua da un p-valor de 0.0078, y la ji-cuadrada de Pearson arroja un p-valor de 0.0047. Ambos quedan por debajo del nivel de significancia de 0.05, así que en los dos casos rechazamos la hipótesis nula de independencia.
+
+En otras palabras probamos si el asalto en TP está ligado al tipo de transporte que usa la
+persona, o si ambas cosas solo parecían relacionarse por dónde vive (si en las ciudades
+grandes hubiera a la vez más metro y más delincuencia, la relación sería una ilusión del
+tamaño de localidad). Al condicionar sobre `tam_loc` descontamos ese efecto, y la relación
+sigue ahí: `grupo_tp` aporta información propia sobre el riesgo de asalto. Que las dos
+pruebas coincidan refuerza la conclusión y respalda mantener el arco. Esta dependencia es
+además la base de la query 4.
+
+## Aprendizaje de la estructura con hill-climbing
+
+Hasta aquí las tres DAGs se propusieron a partir de razonamiento. Ahora invertimos el enfoque: en lugar de imponer una estructura, dejamos que el algoritmo **hill-climbing** (`hc`) la aprenda directamente de los datos. El algoritmo parte de una red vacía y va agregando, quitando o invirtiendo arcos, quedándose en cada paso con el cambio que más mejora el score, hasta que ninguna modificación lo aumenta. El resultado es la estructura que mejor se ajusta a los datos según ese criterio.
+
+```{r}
+dag_hc <- hc(d_completo)
+modelstring(dag_hc)
+graphviz.plot(dag_hc, shape = "ellipse")
+```
+
+## Pertinencia de la estructura aprendida
+
+La red obtenida por hill-climbing coincide con la DAG 3 en sus relaciones más sólidas:
+`tam_loc → grupo_tp`, `grupo_tp → asalto_tp` y los arcos que salen de `escolaridad`
+(`ingreso_gpo` y `ocupacion`) aparecen en ambas, y son justamente los que la prueba de
+`arc.strength` había marcado como más significativos. Que el algoritmo, partiendo solo de
+los datos, reconstruya estas relaciones respalda las decisiones que tomamos a mano.
+
+El algoritmo **conecta las tres percepciones entre sí** (`perc_seguridad → perc_eficiencia`, y ambas hacia `perc_costo`), una relación que no habíamos propuesto pero que es plausible: quien percibe el transporte como inseguro tiende también a verlo como ineficiente y caro. En cambio, **elimina los arcos `ingreso_gpo → perc_costo` y `ocupacion → perc_costo`** que sí incluía la DAG 3 —los mismos que `arc.strength` había señalado como no significativos—, lo que confirma que esas dependencias eran débiles.
+
+Ahora bien, la pertinencia de esta estructura tiene un límite importante: el hill-climbing
+detecta **asociación, no causalidad**, y elige la dirección de los arcos por conveniencia
+estadística, no por sentido teórico. La relación `perc_seguridad → perc_eficiencia`, por
+ejemplo, podría ir en cualquiera de las dos direcciones sin cambiar el ajuste. Por eso la
+estructura aprendida se interpreta como una guía de qué variables están relacionadas. 
+
+## Respuesta a las queries
+
+Las queries se responden sobre la **DAG 3**, ya que es la estructura que contiene las
+relaciones de dependencia que cada pregunta busca examinar. Usamos `cpquery` para estimar
+las probabilidades condicionales de interés.
+
+### Query 1 — Metro vs. resto de transporte público
+
+La pregunta es si quienes usan el metro perciben el transporte público como más seguro y
+más eficiente que quienes usan otro tipo de transporte público. Comparamos, para cada
+grupo, la probabilidad de percibir el servicio como seguro y como eficiente.
+
+```{r}
+set.seed(42)
+
+# Percepción de SEGURIDAD
+cat("P(seguro | metro)   =", cpquery(bn3, event = (perc_seguridad == "seguro"), evidence = (grupo_tp == "metro"), n = 10^6), "\n")
+cat("P(seguro | otro_tp) =", cpquery(bn3, event = (perc_seguridad == "seguro"), evidence = (grupo_tp == "otro_tp"), n = 10^6), "\n\n")
+
+# Percepción de EFICIENCIA
+cat("P(eficiente | metro)   =", cpquery(bn3, event = (perc_eficiencia == "eficiente"), evidence = (grupo_tp == "metro"), n = 10^6), "\n")
+cat("P(eficiente | otro_tp) =", cpquery(bn3, event = (perc_eficiencia == "eficiente"), evidence = (grupo_tp == "otro_tp"), n = 10^6), "\n")
+```
+Los resultados van en dirección contraria a lo que la pregunta sugería. Entre los usuarios
+de metro, la probabilidad de percibir el transporte público como seguro es de 0.32, frente
+a 0.43 entre quienes usan otro tipo de transporte público. En eficiencia ocurre lo mismo:
+0.55 contra 0.63 a favor del resto de usuarios. Es decir, en ambas dimensiones los
+usuarios de metro evalúan **peor** el servicio, no mejor.
+
+La respuesta a la query 1 es, entonces, negativa: quienes usan principalmente el metro no
+lo consideran ni más seguro ni más efectivo que el resto de usuarios de transporte público;
+al contrario, tienden a percibirlo de forma más desfavorable.
+
+### Query 2 — Ocupación y percepción del costo
+
+La pregunta es si patrones y autoempleados difieren de los profesionistas en su percepción
+del costo del transporte. Comparamos la probabilidad de percibir el transporte como caro
+entre ambos grupos ocupacionales.
+
+```{r}
+set.seed(42)
+
+cat("P(caro | patron_autoempleado) =", cpquery(bn3, event = (perc_costo == "caro"), evidence = (ocupacion == "patron_autoempleado"), n = 10^6), "\n")
+cat("P(caro | profesionista)       =", cpquery(bn3, event = (perc_costo == "caro"), evidence = (ocupacion == "profesionista"), n = 10^6), "\n")
+```
+
+La diferencia entre ambos grupos es mínima: la probabilidad de percibir el transporte como
+caro es de 0.55 entre patrones y autoempleados, y de 0.59 entre profesionistas, apenas
+cuatro puntos porcentuales de separación. Ambos grupos coinciden en ver el costo del
+transporte como elevado en proporciones muy similares.
+
+La respuesta a la query 2 es, por tanto, que no existe una diferencia relevante entre
+patrones/autoempleados y profesionistas en su percepción del costo.
+
+### Query 3 — Escolaridad y modo de transporte principal
+
+La pregunta es si el nivel de escolaridad influye en el modo de transporte que la persona
+usa principalmente. Como `modo_principal` tiene varias categorías, comparamos, para cada
+nivel de escolaridad, la probabilidad de que el modo principal sea el automóvil o motocicleta
+frente al transporte público concesionado, que son los dos modos dominantes.
+
+```{r}
+set.seed(42)
+
+cat("P(auto | basica) =", cpquery(bn3, event = (modo_principal == "auto_moto"), evidence = (escolaridad == "basica"), n = 10^6), "\n")
+cat("P(auto | media_superior) =", cpquery(bn3, event = (modo_principal == "auto_moto"), evidence = (escolaridad == "media_superior"), n = 10^6), "\n")
+cat("P(auto | superior) =", cpquery(bn3, event = (modo_principal == "auto_moto"), evidence = (escolaridad == "superior"), n = 10^6), "\n")
+cat("P(tp_concesionado | basica) =", cpquery(bn3, event = (modo_principal == "tp_concesionado"), evidence = (escolaridad == "basica"), n = 10^6), "\n")
+cat("P(tp_concesionado | media_superior) =", cpquery(bn3, event = (modo_principal == "tp_concesionado"), evidence = (escolaridad == "media_superior"), n = 10^6), "\n")
+cat("P(tp_concesionado | superior) =", cpquery(bn3, event = (modo_principal == "tp_concesionado"), evidence = (escolaridad == "superior"), n = 10^6), "\n")
+```
+Las probabilidades apenas se mueven entre niveles de escolaridad. La probabilidad de que el
+modo principal sea el automóvil se mantiene prácticamente constante —0.21, 0.21 y 0.22 para
+básica, media superior y superior—, y la del transporte concesionado sube muy poco (0.67, 0.68 y 0.69). En los tres niveles educativos, el transporte concesionado es
+por mucho el modo dominante.
+
+La respuesta a la query 3 es que la escolaridad no parece influir de forma notoria en el
+modo de transporte principal, al menos entre automóvil y transporte concesionado.
+
+### Query 4 — Ingreso y riesgo de asalto en transporte público
+
+La pregunta es si, entre quienes usan transporte público, la probabilidad de sufrir un
+asalto difiere según el nivel de ingreso. Contrastamos el nivel bajo (`hasta_2_sm`) contra
+el alto (`mas_de_2_sm`) de la variable `ingreso_gpo`, que es la que forma parte de la red.
+
+```{r}
+set.seed(42)
+
+cat("P(asalto | ingreso bajo) =", cpquery(bn3, event = (asalto_tp == "si"), evidence = (ingreso_gpo == "hasta_2_sm"), n = 10^6), "\n")
+cat("P(asalto | ingreso alto) =", cpquery(bn3, event = (asalto_tp == "si"), evidence = (ingreso_gpo == "mas_de_2_sm"), n = 10^6), "\n")
+```
+
+Las dos probabilidades son prácticamente iguales: 7.2% para el nivel bajo de ingreso y 7.9%
+para el alto. La diferencia es menor a un punto porcentual. En términos prácticos, ambos
+grupos enfrentan un riesgo similar.
+
+La respuesta a la query 4 es que el nivel de ingreso no marca una diferencia relevante en
+la probabilidad de sufrir un asalto en transporte público. Este resultado hay que tomarlo
+con cautela por dos razones. Primero, se trata del query más frágil del estudio: en toda la
+muestra solo 74 personas reportaron haber sido asaltadas en TP, así que las probabilidades
+condicionales descansan sobre un número pequeño de casos y las diferencias observadas caen
+dentro del margen de variación esperado. Segundo, en la DAG 3 el asalto está conectado
+directamente con el tipo de transporte y el tamaño de localidad, no con el ingreso, lo que
+sugiere que el riesgo de asalto se explica mejor por el contexto de movilidad que por la
+posición económica del usuario.
