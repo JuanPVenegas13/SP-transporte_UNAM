@@ -1,0 +1,174 @@
+---
+title: "Redes Bayesianas Multinomiales — Transporte ENMT"
+subtitle: "Análisis de métodos de razonamiento e incertidumbre, Gpo 101 - AD 2026"
+author: "Arie Gonzalez"
+format:
+    html:
+        toc: true
+        html-math-method: katex
+        embed-resources: true
+        df-print: kable
+editor: source
+---
+
+## Datos
+
+Leemos la base final construida en la etapa de Python. Los nodos vienen como texto, así que `stringsAsFactors = TRUE` los convierte en factores directamente.
+
+```{r}
+library(bnlearn)
+d <- read.csv("data/processed/enmt_bn_final.csv", stringsAsFactors = TRUE)
+str(d)
+```
+
+### Orden de los niveles
+
+Al leer el CSV, R ordena los niveles de cada factor **alfabéticamente**, lo que no respeta el orden lógico de las variables ordinales. Por ejemplo, `ingreso_gpo` queda como `hasta_2_sm < mas_de_2_sm < sin_ingreso`, cuando el orden con sentido es `sin_ingreso < hasta_2_sm < mas_de_2_sm`.
+
+Fijamos manualmente el orden de los factores ordinales que intervienen en las queries. Esto importa sobre todo para **Q4**, que compara el riesgo de asalto según se gane "más o menos" que el ingreso promedio: sin el orden correcto, la interpretación de la variable pierde sentido. El orden previsto de cada nodo está documentado en `enmt_bn_codebook.csv`, columna `niveles_en_orden`.
+
+```{r}
+d$ingreso_gpo <- factor(d$ingreso_gpo,
+                        levels = c("sin_ingreso", "hasta_2_sm", "mas_de_2_sm"))
+d$ingreso_bin <- factor(d$ingreso_bin, levels = c("bajo", "alto"))
+d$escolaridad <- factor(d$escolaridad,
+                        levels = c("basica", "media_superior", "superior"))
+```
+
+## Propuesta de estructuras (DAGs)
+
+Una red bayesiana parte de un **grafo acíclico dirigido (DAG)** que codifica las relaciones de dependencia entre las variables: cada arco `A → B` afirma que `A` influye directamente sobre `B`. Como no conocemos de antemano la estructura verdadera, proponemos **tres DAGs distintas** —tres hipótesis competidoras sobre cómo se relacionan las variables— que más adelante compararemos con criterios de ajuste (BIC/AIC) para elegir la más adecuada a los datos.
+
+Las **variables de interés** son los nodos que intervienen en las cuatro queries asignadas, más un conjunto de covariables sociodemográficas de contexto:
+
+- **Sociodemográficas:** `edad_gpo`, `escolaridad`, `ingreso_gpo`, `ocupacion`, `tam_loc`.
+- **Uso de transporte:** `grupo_tp`, `modo_principal`.
+- **Percepción y victimización:** `perc_seguridad`, `perc_eficiencia`, `perc_costo`, `asalto_tp`.
+
+### DAG 1 — Las características sociodemográficas determinan el uso y la percepción
+
+La primera hipótesis plantea un flujo **de arriba hacia abajo**: los atributos de la persona (edad, escolaridad, ingreso, ocupación) y el contexto geográfico (tamaño de localidad) determinan **qué medio de transporte utiliza**, y el transporte utilizado determina, a su vez, **cómo percibe el servicio** y **su exposición al riesgo de asalto**. Es la estructura más natural desde la teoría social: las condiciones estructurales anteceden a las decisiones de movilidad, y estas a la experiencia.
+
+La siguiente tabla justifica cada arco propuesto:
+
+| Arco | Lectura |
+|------------------------------------|------------------------------------|
+| `edad_gpo → escolaridad` | La generación condiciona el nivel educativo alcanzado. |
+| `escolaridad → ingreso_gpo` | Mayor escolaridad se asocia a mayores ingresos. |
+| `escolaridad → ocupacion`, `edad_gpo → ocupacion` | La formación y la edad determinan el tipo de ocupación. |
+| `tam_loc → grupo_tp` | La oferta de transporte (p. ej. metro) depende del tamaño de la localidad. |
+| `ingreso_gpo → modo_principal`, `escolaridad → modo_principal`, `tam_loc → modo_principal` | La elección del modo principal responde a recursos, perfil y oferta local. |
+| `grupo_tp → perc_seguridad`, `grupo_tp → perc_eficiencia` | La experiencia con el tipo de transporte moldea su percepción. |
+| `modo_principal → perc_costo`, `ocupacion → perc_costo` | El modo usado y la ocupación influyen en cómo se percibe el costo. |
+| `ingreso_gpo → asalto_tp`, `grupo_tp → asalto_tp` | El ingreso y el tipo de transporte se relacionan con la exposición al asalto. |
+
+```{r}
+nodos <- c("edad_gpo", "escolaridad", "ingreso_gpo", "ocupacion", "tam_loc",
+           "grupo_tp", "modo_principal",
+           "perc_seguridad", "perc_eficiencia", "perc_costo", "asalto_tp")
+
+dag1 <- empty.graph(nodes = nodos)
+arcos1 <- matrix(c(
+  "edad_gpo",     "escolaridad",      # la generación influye en la escolaridad
+  "escolaridad",  "ingreso_gpo",      # más estudios -> más ingreso
+  "escolaridad",  "ocupacion",        # estudios -> tipo de ocupación
+  "edad_gpo",     "ocupacion",
+  "tam_loc",      "grupo_tp",         # en ciudades grandes hay metro
+  "ingreso_gpo",  "modo_principal",   # ingreso -> auto vs. transporte público
+  "escolaridad",  "modo_principal",
+  "tam_loc",      "modo_principal",
+  "grupo_tp",     "perc_seguridad",   # el TP que usas moldea tu percepción
+  "grupo_tp",     "perc_eficiencia",
+  "modo_principal","perc_costo",
+  "ocupacion",    "perc_costo",       # la ocupación influye en cómo ves el costo
+  "ingreso_gpo",  "asalto_tp",        # Q4: el ingreso y el asalto
+  "grupo_tp",     "asalto_tp"),
+  byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
+arcs(dag1) <- arcos1
+
+graphviz.plot(dag1, shape = "ellipse")
+```
+
+### DAG 2 — Las percepciones condicionan la elección de transporte
+
+La segunda hipótesis cuestiona el supuesto de la DAG 1 de que la percepción es
+únicamente un efecto del transporte usado. Aquí planteamos que la relación puede ir
+en sentido inverso: **la percepción de seguridad y de costo del transporte público
+influye en qué modo decide usar la persona**. Alguien que percibe el transporte
+público como inseguro puede optar por el automóvil o el taxi; alguien que lo percibe
+como barato puede preferirlo. Bajo esta lectura, las percepciones se ubican *antes*
+de la elección del modo, no después.
+
+Las variables sociodemográficas se conservan como causas de fondo, pero el orden entre
+percepción y uso de transporte se invierte respecto a la DAG 1.
+
+| Arco | Lectura |
+|---|---|
+| `edad_gpo → escolaridad`, `escolaridad → ingreso_gpo`, `escolaridad → ocupacion` | Estructura sociodemográfica de base (igual que en la DAG 1). |
+| `perc_seguridad → modo_principal`, `perc_costo → modo_principal` | Percibir el TP como inseguro o caro empuja hacia otros modos. |
+| `perc_seguridad → grupo_tp` | La percepción de seguridad influye en el tipo de TP que se usa. |
+| `ingreso_gpo → perc_costo` | Con menos ingreso, el mismo costo se percibe como más alto. |
+| `tam_loc → grupo_tp` | La oferta de transporte depende del tamaño de localidad. |
+| `ingreso_gpo → asalto_tp`, `grupo_tp → asalto_tp` | Ingreso y tipo de TP se relacionan con el riesgo de asalto. |
+| `perc_eficiencia → modo_principal` | Percibir el TP como eficiente favorece su uso como modo principal. |
+
+```{r}
+dag2 <- empty.graph(nodes = nodos)
+arcos2 <- matrix(c(
+  "edad_gpo",       "escolaridad",
+  "escolaridad",    "ingreso_gpo",
+  "escolaridad",    "ocupacion",
+  "edad_gpo",       "ocupacion",
+  "ingreso_gpo",    "perc_costo",       # el ingreso tiñe la percepción de costo
+  "perc_seguridad", "grupo_tp",         # percepción -> elección (invertido vs DAG 1)
+  "perc_seguridad", "modo_principal",
+  "perc_costo",     "modo_principal",
+  "perc_eficiencia","modo_principal",
+  "tam_loc",        "grupo_tp",
+  "ingreso_gpo",    "asalto_tp",
+  "grupo_tp",       "asalto_tp"),
+  byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
+arcs(dag2) <- arcos2
+
+graphviz.plot(dag2, shape = "ellipse")
+```
+### DAG 3 — El contexto geográfico como causa estructural
+
+La tercera hipótesis pone en el centro al **tamaño de localidad** como causa de fondo
+de casi todo el sistema. El razonamiento: la oferta de transporte no está distribuida
+de forma homogénea en el país —el metro y el transporte masivo existen sobre todo en
+zonas urbanas grandes—, de modo que `tam_loc` determina qué modos están disponibles,
+qué tipo de TP se usa, y de forma indirecta las percepciones y el riesgo. Las variables
+sociodemográficas siguen presentes, pero aquí el contexto geográfico es el primer motor.
+
+| Arco | Lectura |
+|---|---|
+| `tam_loc → grupo_tp`, `tam_loc → modo_principal` | La oferta de transporte disponible depende del tipo de localidad. |
+| `tam_loc → ingreso_gpo` | El nivel de ingreso típico varía entre localidades grandes y pequeñas. |
+| `tam_loc → escolaridad` | El acceso educativo difiere según el tamaño de la localidad. |
+| `escolaridad → ocupacion`, `edad_gpo → ocupacion` | La ocupación depende de formación y edad. |
+| `grupo_tp → perc_seguridad`, `grupo_tp → perc_eficiencia`, `grupo_tp → asalto_tp` | El tipo de TP usado moldea percepciones y exposición. |
+| `ingreso_gpo → perc_costo`, `ocupacion → perc_costo` | Ingreso y ocupación tiñen la percepción del costo. |
+| `tam_loc → asalto_tp` | La incidencia delictiva varía según el tamaño de la localidad. |
+
+```{r}
+dag3 <- empty.graph(nodes = nodos)
+arcos3 <- matrix(c(
+  "tam_loc",      "escolaridad",      # el contexto geográfico como raíz
+  "tam_loc",      "ingreso_gpo",
+  "tam_loc",      "grupo_tp",
+  "tam_loc",      "modo_principal",
+  "tam_loc",      "asalto_tp",
+  "edad_gpo",     "ocupacion",
+  "escolaridad",  "ocupacion",
+  "ingreso_gpo",  "perc_costo",
+  "ocupacion",    "perc_costo",
+  "grupo_tp",     "perc_seguridad",
+  "grupo_tp",     "perc_eficiencia",
+  "grupo_tp",     "asalto_tp"),
+  byrow = TRUE, ncol = 2, dimnames = list(NULL, c("from", "to")))
+arcs(dag3) <- arcos3
+
+graphviz.plot(dag3, shape = "ellipse")
+```
+
